@@ -6,7 +6,7 @@ import tensorflow as tf
 import math
 import matplotlib.pyplot as plt
 import pandas as pd
-from dilated_rnn import DilatedRNN
+from models.dilated_rnn import DilatedRNN
 
 # Import mnist dataset from tensorflow
 from tensorflow.examples.tutorials.mnist import input_data
@@ -45,8 +45,8 @@ optimizer = tf.train.RMSPropOptimizer(l_rate, 0.9)
 train = optimizer.minimize(loss_func)
 
 # Compute accuracy of the model
-# probabilities = tf.nn.softmax(output_logits)
-predicted_class = tf.argmax(output_logits, 1)
+probabilities = tf.nn.softmax(output_logits)
+predicted_class = tf.argmax(probabilities, 1)
 true_class = tf.argmax(y_labels, 1)
 equality = tf.equal(predicted_class, true_class)
 accuracy = tf.reduce_mean(tf.cast(equality, tf.float32))
