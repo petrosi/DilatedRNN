@@ -7,7 +7,7 @@ import tensorflow as tf
 import math
 import matplotlib.pyplot as plt
 import pandas as pd
-from dilated_rnn import DilatedRNN
+from models.dilated_rnn import DilatedRNN
 
 # Function that generates the data for the copy problem
 def sequence_gen(T, batch_num):
