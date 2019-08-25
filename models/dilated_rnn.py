@@ -83,9 +83,9 @@ class DilatedRNN():
             log_predictions = tf.add(tf.matmul(outputs[-1], out_weights), out_bias)
         elif experiment == "copy_memory":
             outputs = tf.stack(outputs, axis = 0)
-            shape = outputs.get_shape()
-            outputs = tf.reshape(outputs, [int(shape[1]), int(shape[0]), int(shape[2])])
-            out_h = tf.einsum('ijk,kl->ijl', outputs, out_weights)
+            #shape = outputs.get_shape()
+            #outputs = tf.reshape(outputs, [int(shape[1]), int(shape[0]), int(shape[2])])
+            out_h = tf.einsum('ijk,kl->jil', outputs, out_weights)
             log_predictions = tf.add(out_h, out_bias)
         else:
             print("Wrong selection for the variable 'experiment'")

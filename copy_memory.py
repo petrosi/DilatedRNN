@@ -45,8 +45,8 @@ n_test = 1000
 
 ### Unpermuted and permuted version of pixel-by-pixel mnist -- None because we have set the batch
 # Set the placeholders for our data
-X_data = tf.placeholder(tf.float32, [batch_size, unrolled_dim, num_input])
-y_labels = tf.placeholder(tf.float32, [batch_size, unrolled_dim, number_of_classes])
+X_data = tf.placeholder(tf.float32, [None, unrolled_dim, num_input])
+y_labels = tf.placeholder(tf.float32, [None, unrolled_dim, number_of_classes])
 
 # Retrieve the predictions
 pred_object = DilatedRNN()
