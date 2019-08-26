@@ -36,8 +36,6 @@ class DilatedRNN():
             for i in range(0,len(input_to_layer), dilation):
                 concat_tensors = tf.concat(input_to_layer[i:(i+dilation)], 0)
                 reduced_input_to_layer.append(concat_tensors)
-
-            # reduced_input_to_layer = [tf.concat(input_to_layer[i * dilation:(i + 1) * dilation],axis=0) for i in range(reduced_timestamps)]
                 
             reduced_output_from_layer, _ = tf.contrib.rnn.static_rnn(cell_layer, reduced_input_to_layer, dtype=tf.float32, scope = scope)
                 
@@ -53,42 +51,54 @@ class DilatedRNN():
         return input_to_layer
     
 
-    def classification(self, input_data, class_num, timestamps, list_of_dilations, num_hidden_units, input_dimension, typeof_cell, experiment):
+    def classification(self, input_data, class_num, timestamps, list_of_dilations, num_hidden_units, input_dimension, typeof_cell, experiment, dropout = None):
         
         if typeof_cell not in ["VanillaRNN", "LSTM", "GRU"]:
             raise ValueError("Valid cell type is 'VanillaRNN' or 'LSTM' or 'GRU'")
-            
-        cell_list = []
-            
-        if typeof_cell == "VanillaRNN":
-            for i in range(len(list_of_dilations)):
-                cell_tf = tf.contrib.rnn.BasicRNNCell(num_hidden_units)
-                cell_list.append(cell_tf)
-        elif typeof_cell == "LSTM":
-            for i in range(len(list_of_dilations)):
-                cell_tf = tf.contrib.rnn.BasicLSTMCell(num_hidden_units)
-                cell_list.append(cell_tf)
-        else:
-            for i in range(len(list_of_dilations)):
-                cell_tf = tf.contrib.rnn.GRUCell(num_hidden_units)
-                cell_list.append(cell_tf)
+        
+        type_to_func_dict = {
+                "VanillaRNN": tf.contrib.rnn.BasicRNNCell,
+                "LSTM": tf.contrib.rnn.BasicLSTMCell,
+                "GRU": tf.contrib.rnn.GRUCell
+        }
+        
+        cell_func = type_to_func_dict[typeof_cell]
+        cell_list = [cell_func(num_hidden_units) for _ in range(len(list_of_dilations))]
+        
+        if dropout is not None:
+            cell_list[0] = tf.contrib.rnn.DropoutWrapper(cell_list[0], dropout, 1, 1)
         
         rnn_data = tf.unstack(input_data, timestamps, 1)
         
         outputs = self.drnn(cell_list, rnn_data, list_of_dilations)
 
-        out_weights = tf.Variable(tf.random_normal(shape=[num_hidden_units, class_num]))
-        out_bias = tf.Variable(tf.random_normal(shape=[class_num]))
+        
         if experiment == "mnist":
-            log_predictions = tf.add(tf.matmul(outputs[-1], out_weights), out_bias)
-        elif experiment == "copy_memory":
+            start_dilation = list_of_dilations[0]
+            if start_dilation == 1:
+                out_weights = tf.Variable(tf.random_normal(shape=[num_hidden_units, class_num]))
+                out_bias = tf.Variable(tf.random_normal(shape=[class_num]))
+                fuse_outputs = outputs[-1]
+            else:
+                out_weights = tf.Variable(tf.random_normal(shape=[num_hidden_units*start_dilation, class_num]))
+                out_bias = tf.Variable(tf.random_normal(shape=[class_num]))
+                fuse_outputs = outputs[-start_dilation]
+                for i in range(-start_dilation+1, 0, 1):
+                    fuse_outputs = tf.concat([fuse_outputs, outputs[i]], axis = 1)
+            
+            log_predictions = tf.add(tf.matmul(fuse_outputs, out_weights), out_bias)
+                
+        elif experiment == "copy_memory" or experiment == "PTB":
+            
+            out_weights = tf.Variable(tf.random_normal(shape=[num_hidden_units, class_num]))
+            out_bias = tf.Variable(tf.random_normal(shape=[class_num]))
+            
             outputs = tf.stack(outputs, axis = 0)
-            #shape = outputs.get_shape()
-            #outputs = tf.reshape(outputs, [int(shape[1]), int(shape[0]), int(shape[2])])
             out_h = tf.einsum('ijk,kl->jil', outputs, out_weights)
             log_predictions = tf.add(out_h, out_bias)
+            
         else:
+            
             print("Wrong selection for the variable 'experiment'")
             
         return log_predictions
-

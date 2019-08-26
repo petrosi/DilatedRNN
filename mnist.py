@@ -1,17 +1,18 @@
-###############################################################################
+###########################################################################################
 ### 4.2 Pixel-by-pixel MNIST ###
 
 import numpy as np
 import tensorflow as tf
-import math
-import matplotlib.pyplot as plt
-import pandas as pd
 from models.dilated_rnn import DilatedRNN
 
 # Import mnist dataset from tensorflow
 from tensorflow.examples.tutorials.mnist import input_data
 
 mnist_dataset = input_data.read_data_sets("MNIST_data/", one_hot=True)
+
+train_data = mnist_dataset.train
+
+# help(tf.contrib.learn.datasets.mnist.DataSet.next_batch)
 
 tf.reset_default_graph()
 
@@ -22,11 +23,17 @@ num_input = 1
 number_of_classes = 10 # MNIST total classes (0-9 digits)
 cell_type = "VanillaRNN"
 hidden_units = 30 # hidden layer num of features
-dilations = [2**j for j in range(num_of_layers)]
+# dilations = [2**j for j in range(num_of_layers)]
+dilations = [2**j for j in range(1, num_of_layers)]
 batch_size = 128
 l_rate = 0.001
-number_of_epochs= 4
+number_of_epochs= 1
 experiment = "mnist"
+decay = 0.9
+
+
+batch_number = train_data.num_examples//batch_size + 1
+
 
 ### Unpermuted and permuted version of pixel-by-pixel mnist -- None because we have set the batch
 # Set the placeholders for our data
@@ -41,7 +48,7 @@ output_logits = pred_object.classification(X_data, number_of_classes, unrolled_d
 loss_func = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=output_logits, labels=y_labels))
 
 # Optimizer
-optimizer = tf.train.RMSPropOptimizer(l_rate, 0.9)
+optimizer = tf.train.RMSPropOptimizer(l_rate, decay)
 train = optimizer.minimize(loss_func)
 
 # Compute accuracy of the model
@@ -54,16 +61,12 @@ accuracy = tf.reduce_mean(tf.cast(equality, tf.float32))
 # Initialize the variables (i.e. assign their default value)
 init = tf.global_variables_initializer()
 
-# Optional
-# gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.85)
-
 permutation = True # if you want permuted version set it to true
 
 if permutation:
     np.random.seed(100)
     permute = np.random.permutation(784)
 
-# with tf.Session(config = tf.ConfigProto(gpu_options = gpu_options)) as sess:
 
 with tf.Session() as sess:
     
@@ -72,26 +75,37 @@ with tf.Session() as sess:
     results_train_set = []
     results_val_set = []
     
+    # Validation set
+    val_x = mnist_dataset.validation.images
+    val_y = mnist_dataset.validation.labels
+    if permutation:
+        val_x = val_x[:, permute]
+    val_x = val_x.reshape((-1, unrolled_dim, num_input))
+    
     for epoch in range(1,number_of_epochs+1):
-        # Training set
-        batch_x, batch_y = mnist_dataset.train.next_batch(batch_size)
-        if permutation:
-            batch_x = batch_x[:, permute]
-        batch_x = batch_x.reshape((batch_size, unrolled_dim, num_input))
+        
+        count_loss = 0
+        count_accuracy = 0
+        
+        for _ in range(batch_number):
+            
+            # Training set
+            batch_x, batch_y = train_data.next_batch(batch_size)
+            if permutation:
+                batch_x = batch_x[:, permute]
+            batch_x = batch_x.reshape((batch_size, unrolled_dim, num_input))
 
-        # Run optimization
-        train_loss, train_accuracy, _ = sess.run([loss_func, accuracy, train], feed_dict={X_data: batch_x, y_labels: batch_y})
+            # Run optimization
+            batch_loss, batch_accuracy, _ = sess.run([loss_func, accuracy, train], feed_dict={X_data: batch_x, y_labels: batch_y})
         
-        # Validation set
-        batch_x = mnist_dataset.validation.images
-        batch_y = mnist_dataset.validation.labels
-        if permutation:
-            batch_x = batch_x[:, permute]
-        batch_x = batch_x.reshape((-1, unrolled_dim, num_input))
+            count_loss += batch_loss
+            count_accuracy += batch_accuracy
+            
+        train_loss = count_loss/batch_number
+        train_accuracy = count_accuracy/batch_number
         
-        
-        # Run optimization
-        val_loss, val_accuracy= sess.run([loss_func, accuracy], feed_dict={X_data: batch_x, y_labels: batch_y})
+        # Run for validation set
+        val_loss, val_accuracy= sess.run([loss_func, accuracy], feed_dict={X_data: val_x, y_labels: val_y})
 
         results_train_set.append((epoch, train_loss, train_accuracy))
         results_val_set.append((val_loss, val_accuracy))
@@ -104,6 +118,7 @@ with tf.Session() as sess:
                   "{:.3f}".format(train_accuracy) + ", Validation Loss= " + \
                   "{:.4f}".format(val_loss) + ", Validation Accuracy= " + \
                   "{:.3f}".format(val_accuracy))
+
     
     # Calculate accuracy for mnist test images
     test_data = mnist_dataset.test.images
@@ -143,4 +158,3 @@ with tf.Session() as sess:
     plt.show()
 
 ########################################################################################
-
