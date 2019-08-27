@@ -98,7 +98,7 @@ def ptb_producer(raw_data, batch_size, num_steps, name=None):
     
     return x, y
 
-training_data, validation_data, test_data, vocab_size = ptb_raw_data(data_path=r"C:\Users\Manos\Desktop\Project Deep Learning\Datasets\simple-examples\data")
+train_data, valid_data, test_data, vocab_size = ptb_raw_data("./PTB_dataset/")
 
 tf.reset_default_graph()
 

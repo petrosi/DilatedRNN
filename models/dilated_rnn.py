@@ -1,7 +1,7 @@
 import tensorflow as tf
 import math
 
-class DilatedRNN():
+class DilatedRNN:
     
     def __init__(self):
         pass
