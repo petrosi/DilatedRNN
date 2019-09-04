@@ -5,18 +5,8 @@ import numpy as np
 import tensorflow as tf
 from models.dilated_rnn import DilatedRNN
 import time
+import math
 import pandas as pd
-
-# Import mnist dataset from tensorflow
-from tensorflow.examples.tutorials.mnist import input_data
-
-mnist_dataset = input_data.read_data_sets("MNIST_data/", one_hot=True)
-
-train_data = mnist_dataset.train
-
-# help(tf.contrib.learn.datasets.mnist.DataSet.next_batch)
-
-tf.reset_default_graph()
 
 # Define some hyperparameters
 unrolled_dim = 784 # MNIST data input (img shape: 28*28) # timesteps
@@ -33,27 +23,54 @@ experiment = "mnist"
 decay = 0.9
 permutation_list = [True, False]
 
-batch_number = train_data.num_examples//batch_size
+tf.reset_default_graph()
+
+X_train, y_train = np.load(r"./MNIST_data/X_train.npy"), np.load(r"./MNIST_data/y_train.npy")
+X_val, y_val = np.load(r"./MNIST_data/X_val.npy"), np.load(r"./MNIST_data/y_val.npy")
+X_test, y_test = np.load(r"./MNIST_data/X_test.npy"), np.load(r"./MNIST_data/y_test.npy")
+
+# # Set the placeholders for our data
+X = tf.placeholder(dtype=tf.float32, shape=[None, unrolled_dim, num_input])
+y = tf.placeholder(dtype=tf.float32, shape=[None, number_of_classes])
+batch_size = tf.placeholder(tf.int64)
+
+# Create the dataset
+train_dataset = tf.data.Dataset \
+            .from_tensor_slices((X, y)) \
+            .shuffle(buffer_size=16*batch_size) \
+            .batch(batch_size, drop_remainder=True)
+
+validation_dataset = tf.data.Dataset \
+            .from_tensor_slices((X, y)) \
+            .batch(batch_size, drop_remainder=True)
+
+test_dataset = tf.data.Dataset \
+            .from_tensor_slices((X, y)) \
+            .batch(batch_size, drop_remainder=True)
+
+dataset_iterator = tf.data.Iterator.from_structure(train_dataset.output_types, train_dataset.output_shapes)
+batch_X, batch_y = dataset_iterator.get_next()
+
+train_iterator = dataset_iterator.make_initializer(train_dataset)
+val_iterator = dataset_iterator.make_initializer(validation_dataset)
+test_iterator = dataset_iterator.make_initializer(test_dataset)
 
 for permutation in permutation_list:
     
+    X_train, y_train = X_train[:200], y_train[:200]
+    X_val, y_val = X_val[:40], y_val[:40]
+    X_test, y_test = X_test[:40], y_test[:40]
+
     if permutation:
         np.random.seed(100)
-        permute = np.random.permutation(784)
-    
-    # Validation set
-    val_x = mnist_dataset.validation.images
-    val_y = mnist_dataset.validation.labels
-    if permutation:
-        val_x = val_x[:, permute]
-    val_x = val_x.reshape((-1, unrolled_dim, num_input))
-    
-    # Test set
-    test_data = mnist_dataset.test.images
-    test_label = mnist_dataset.test.labels
-    if permutation:
-        test_data = test_data[:, permute]
-    test_data = test_data.reshape((-1, unrolled_dim, num_input))
+        permuted_idx = np.random.permutation(784)
+        X_train = X_train[:, permuted_idx]
+        X_val = X_val[:, permuted_idx]
+        X_test = X_test[:, permuted_idx]
+
+    X_train = X_train.reshape((-1, unrolled_dim, num_input))
+    X_val = X_val.reshape((-1, unrolled_dim, num_input))
+    X_test = X_test.reshape((-1, unrolled_dim, num_input))
     
     for cell_type in cell_type_list:
         
@@ -64,17 +81,12 @@ for permutation in permutation_list:
             print("Starting new optimization process")
             print("Model: Dilated " + cell_type + " for unpermuted mnist")
             
-            
-        # Set the placeholders for our data
-        X_data = tf.placeholder(tf.float32, [None, unrolled_dim, num_input])
-        y_labels = tf.placeholder(tf.float32, [None, number_of_classes])
-
         # Retrieve the predictions
-        pred_object = DilatedRNN()
-        output_logits = pred_object.classification(X_data, number_of_classes, unrolled_dim, dilations, hidden_units, num_input, cell_type, experiment)
+        pred_object = DilatedRNN(cell_type, hidden_units, dilations)
+        output_logits = pred_object.classification(batch_X, number_of_classes, experiment)
 
         # Loss function
-        loss_func = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=output_logits, labels=y_labels))
+        loss_func = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=output_logits, labels=batch_y))
 
         # Optimizer
         optimizer = tf.train.RMSPropOptimizer(l_rate, decay)
@@ -87,7 +99,7 @@ for permutation in permutation_list:
         # Compute accuracy of the model
         probabilities = tf.nn.softmax(output_logits)
         predicted_class = tf.argmax(probabilities, 1)
-        true_class = tf.argmax(y_labels, 1)
+        true_class = tf.argmax(batch_y, 1)
         equality = tf.equal(predicted_class, true_class)
         accuracy = tf.reduce_mean(tf.cast(equality, tf.float32))
 
@@ -104,44 +116,59 @@ for permutation in permutation_list:
             results_train_set = []
             results_val_set = []
     
+            current_val_loss = math.inf
     
             start = time.time()
     
-            for epoch in range(1,number_of_epochs+1):
-        
-                count_loss = 0
-                count_accuracy = 0
-        
-                for _ in range(batch_number):
-            
-                    # Training set
-                    batch_x, batch_y = train_data.next_batch(batch_size)
-                    if permutation:
-                        batch_x = batch_x[:, permute]
-                    batch_x = batch_x.reshape((batch_size, unrolled_dim, num_input))
+            for epoch in range(1, number_of_epochs+1):
 
-                    # Run optimization
-                    batch_loss, batch_accuracy, _ = sess.run([loss_func, accuracy, train], feed_dict={X_data: batch_x, y_labels: batch_y})
+                sess.run(train_iterator, feed_dict={ X: X_train, y: y_train, batch_size: 128 })
+                count_loss = 0; number_of_batches = 0; count_accuracy = 0
         
-                    count_loss += batch_loss
-                    count_accuracy += batch_accuracy
+                while(True):
+                    try:
+                        # Run optimization
+                        batch_loss, batch_accuracy, _ = sess.run([loss_func, accuracy, train])
+                        
+                        count_loss += batch_loss
+                        count_accuracy += batch_accuracy
+                        number_of_batches += 1
+                    except tf.errors.OutOfRangeError:
+                        break
             
-                train_loss = count_loss/batch_number
-                train_accuracy = count_accuracy/batch_number
-        
-                # Run for validation set
-                val_loss, val_accuracy= sess.run([loss_func, accuracy], feed_dict={X_data: val_x, y_labels: val_y})
-
+                train_loss = count_loss/number_of_batches
+                train_accuracy = count_accuracy/number_of_batches
                 results_train_set.append((epoch, train_loss, train_accuracy))
+                
+                sess.run(val_iterator, feed_dict={ X: X_val, y: y_val, batch_size: len(y_val) })
+                val_loss, val_accuracy = sess.run([loss_func, accuracy])
                 results_val_set.append((val_loss, val_accuracy))
         
-                # Print results every 10 epochs
-                if epoch % 10 == 0 or epoch == 1:
+                # Check validation loss every 5 epochs
+                if epoch % 5 == 0 or epoch == 1:
+
                     print("Epoch " + str(epoch) + ", Training Loss= " + \
                           "{:.4f}".format(train_loss) + ", Training Accuracy= " + \
                           "{:.3f}".format(train_accuracy) + ", Validation Loss= " + \
                           "{:.4f}".format(val_loss) + ", Validation Accuracy= " + \
                           "{:.3f}".format(val_accuracy))
+
+                    # Early stopping and checkpointing
+                    if val_loss > current_val_loss:
+                        if permutation:
+                            saver.restore(sess, "MNIST_Checkpoints/Dilated_" + cell_type + "_permuted.ckpt")
+                        else:
+                            saver.restore(sess, "MNIST_checkpoints/Dilated_" + cell_type + "_unpermuted.ckpt")
+                        print("Model restored!")
+                        break
+                    else:
+                        current_val_loss = val_loss
+                        if permutation:
+                            save_path = saver.save(sess, "MNIST_Checkpoints/Dilated_" + cell_type + "_permuted.ckpt")
+                        else:
+                            save_path = saver.save(sess, "MNIST_checkpoints/Dilated_" + cell_type + "_unpermuted.ckpt")
+                        print("Model saved in path: %s" % save_path) 
+
 
             print("Training Finished!")
             
@@ -150,17 +177,9 @@ for permutation in permutation_list:
             training_time = end - start
 
             print("Training time for this model: ", training_time)
-            
-            # Save the variables to disk.
-            if permutation:
-                save_path = saver.save(sess, "path_of_the_file/Dilated_" + cell_type + "_permuted.ckpt")
-                print("Model saved in path: %s" % save_path)  
-            else:
-                save_path = saver.save(sess, "path_of_the_file/Dilated_" + cell_type + "_unpermuted.ckpt")
-                print("Model saved in path: %s" % save_path) 
-
     
-            testing_acc = sess.run(accuracy, feed_dict={X_data: test_data, y_labels: test_label})
+            sess.run(test_iterator, feed_dict={ X: X_test, y: y_test, batch_size: len(y_test) })
+            testing_acc = sess.run(accuracy)
         
             print("Testing Accuracy=" + "{:.3f}".format(testing_acc))
 
@@ -173,9 +192,9 @@ for permutation in permutation_list:
         results.columns = ["Epochs", "Training Loss", "Training Accuracy", "Validation Loss", "Validation Accuracy"]
 
         if permutation:
-            export_csv = results.to_csv (r"path_of_the_file\Dilated_" + cell_type + "_permuted.csv", index = None, header=True)
+            export_csv = results.to_csv (r"MNIST_results/Dilated_" + cell_type + "_permuted.csv", index = None, header=True)
         else:
-            export_csv = results.to_csv (r"path_of_the_file\Dilated_" + cell_type + "_unpermuted.csv", index = None, header=True)
+            export_csv = results.to_csv (r"MNIST_results/Dilated_" + cell_type + "_unpermuted.csv", index = None, header=True)
             
             
 ################################################### End of script #######################################################

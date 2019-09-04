@@ -2,85 +2,100 @@ import tensorflow as tf
 import math
 
 class DilatedRNN:
+
+    type_to_func_dict = {
+        "VanillaRNN": tf.contrib.rnn.BasicRNNCell,
+        "LSTM": tf.contrib.rnn.BasicLSTMCell,
+        "GRU": tf.contrib.rnn.GRUCell
+    }
+    available_cell_types = type_to_func_dict.keys()
+
     
-    def __init__(self):
-        pass
-    
-    
-    def drnn(self, tcell, x_data, dilation_list):
+    def __init__(self, typeof_cell, num_hidden_units, list_of_dilations, dropout = None):
+
+        if typeof_cell not in self.available_cell_types:
+            raise ValueError("Valid cell type is 'VanillaRNN' or 'LSTM' or 'GRU'")
         
-        input_to_layer = x_data.copy()
+        self.cell_type = typeof_cell
+        self.hidden_unit_size = num_hidden_units
+        
+        cell_func = self.type_to_func_dict[typeof_cell]
+        self.cell_list = [cell_func(num_hidden_units) for _ in range(len(list_of_dilations))]
+
+        self.list_of_dilations = list_of_dilations
+
+        if dropout is not None:
+            self.cell_list[0] = tf.contrib.rnn.DropoutWrapper(cell_list[0], dropout, 1, 1)
+            self.dropout = dropout
+
+    
+    
+    def drnn(self, x_data):
+        
+        input_data = x_data.copy()
+        timesteps = len(input_data)
+
         
         layer = 1
         
-        for dilation, cell_layer in zip(dilation_list, tcell):
+        for dilation, cell_layer in zip(self.list_of_dilations, self.cell_list):
             
             # Define the number of timestamps
-            timestamps = len(input_to_layer)
+
+            input_data = tf.convert_to_tensor(input_data)
         
             scope = "Layer_%d" %layer
-            
-            # We want dilation to devide exactly the timestamps
-            if (timestamps % dilation == 0):
-                # Reduce the sequence length by |dilation| times
-                reduced_timestamps = timestamps//dilation
-            else:
-                reduced_timestamps = math.ceil(timestamps/dilation)
-                added_timestamps = (reduced_timestamps * dilation) - timestamps
-                zero_padding = tf.zeros_like(input_to_layer[0])
-                for i in range(added_timestamps):
-                    input_to_layer.append(zero_padding)
-        
-            reduced_input_to_layer = []
 
-            for i in range(0,len(input_to_layer), dilation):
-                concat_tensors = tf.concat(input_to_layer[i:(i+dilation)], 0)
-                reduced_input_to_layer.append(concat_tensors)
+            # Input has shape (T, batch_size, input_size)
+            # For dilation d we want to transorm it to shape (T/d, batch_size*d, input_size)
+
+            # Pad the sequence with 0s in order to make T divisible by d
+            
+            # We want dilation to divide exactly the timestamps
+            if (timesteps % dilation == 0):
+                # Reduce the sequence length by `dilation` times
+                reduced_timesteps = timesteps // dilation
+            else:
+                reduced_timesteps = math.ceil(timesteps/dilation)
+                n_timesteps_to_add = (reduced_timesteps * dilation) - timesteps
+                zero_padding = tf.zeros_like(input_data[0])
+                zero_padding = tf.tile(tf.expand_dims(zero_padding, axis=0), tf.constant([n_timesteps_to_add, 1, 1]))
+                input_data = tf.concat([input_data, zero_padding], axis=0)
                 
+            input_data = tf.split(input_data, dilation)
+            input_data = tf.concat(input_data, axis=1)
+
+            input_data = tf.unstack(input_data)
+            reduced_input_to_layer = input_data
+            
             reduced_output_from_layer, _ = tf.contrib.rnn.static_rnn(cell_layer, reduced_input_to_layer, dtype=tf.float32, scope = scope)
-                
-            output_from_layer = []
-            for i in reduced_output_from_layer:
-                tensor_split = tf.split(i, dilation,0)
-                for j in range(len(tensor_split)):
-                    output_from_layer.append(tensor_split[j])
-                        
-            input_to_layer = output_from_layer[:timestamps]
+            
+            splitted_tensors = [tf.split(tensor, dilation) for tensor in reduced_output_from_layer]
+            output_from_layer = [item for sublist in splitted_tensors for item in sublist]
+
+            input_data = output_from_layer[:timesteps]
             layer += 1
         
-        return input_to_layer
+        return input_data
     
 
-    def classification(self, input_data, class_num, timestamps, list_of_dilations, num_hidden_units, input_dimension, typeof_cell, experiment, dropout = None):
+    def classification(self, input_data, class_num, experiment):
+                    
+        # Change Tensor's shape from (batch_size, T, input_size) to 
+        # list of Tensors with shape (batch_size, input_size)
+        # and length of T
+        rnn_data = tf.unstack(input_data, axis=1)
         
-        if typeof_cell not in ["VanillaRNN", "LSTM", "GRU"]:
-            raise ValueError("Valid cell type is 'VanillaRNN' or 'LSTM' or 'GRU'")
-        
-        type_to_func_dict = {
-                "VanillaRNN": tf.contrib.rnn.BasicRNNCell,
-                "LSTM": tf.contrib.rnn.BasicLSTMCell,
-                "GRU": tf.contrib.rnn.GRUCell
-        }
-        
-        cell_func = type_to_func_dict[typeof_cell]
-        cell_list = [cell_func(num_hidden_units) for _ in range(len(list_of_dilations))]
-        
-        if dropout is not None:
-            cell_list[0] = tf.contrib.rnn.DropoutWrapper(cell_list[0], dropout, 1, 1)
-        
-        rnn_data = tf.unstack(input_data, timestamps, 1)
-        
-        outputs = self.drnn(cell_list, rnn_data, list_of_dilations)
+        outputs = self.drnn(rnn_data)
 
-        
         if experiment == "mnist":
-            start_dilation = list_of_dilations[0]
+            start_dilation = self.list_of_dilations[0]
             if start_dilation == 1:
-                out_weights = tf.Variable(tf.random_normal(shape=[num_hidden_units, class_num]))
+                out_weights = tf.Variable(tf.random_normal(shape=[self.hidden_unit_size, class_num]))
                 out_bias = tf.Variable(tf.random_normal(shape=[class_num]))
                 fuse_outputs = outputs[-1]
             else:
-                out_weights = tf.Variable(tf.random_normal(shape=[num_hidden_units*start_dilation, class_num]))
+                out_weights = tf.Variable(tf.random_normal(shape=[self.hidden_unit_size*start_dilation, class_num]))
                 out_bias = tf.Variable(tf.random_normal(shape=[class_num]))
                 fuse_outputs = outputs[-start_dilation]
                 for i in range(-start_dilation+1, 0, 1):
@@ -90,7 +105,7 @@ class DilatedRNN:
                 
         elif experiment == "copy_memory" or experiment == "PTB":
             
-            out_weights = tf.Variable(tf.random_normal(shape=[num_hidden_units, class_num]))
+            out_weights = tf.Variable(tf.random_normal(shape=[self.hidden_unit_size, class_num]))
             out_bias = tf.Variable(tf.random_normal(shape=[class_num]))
             
             outputs = tf.stack(outputs, axis = 0)
