@@ -6,6 +6,8 @@ import math
 import time
 import pandas as pd
 
+from tensorflow.python import debug as tf_debug
+
 train_data, valid_data, test_data, vocab_size = ptb_reader.ptb_raw_data("./PTB_dataset/")
 
 tf.reset_default_graph()
@@ -27,17 +29,17 @@ dropout = 0.1
 
 X_train, y_train = ptb_reader.ptb_producer(train_data, unrolled_dim, vocab_size)
 X_val, y_val = ptb_reader.ptb_producer(valid_data, unrolled_dim, vocab_size)
-X_test, y_test = ptb_reader.ptb_producer(train_data, unrolled_dim, vocab_size)
+X_test, y_test = ptb_reader.ptb_producer(test_data, unrolled_dim, vocab_size)
 
-X = tf.placeholder(dtype=tf.float32, shape=[None, X_train.shape[1], num_input])
-y = tf.placeholder(dtype=tf.float32, shape=[None, y_train.shape[1], number_of_classes])
+X = tf.placeholder(dtype=tf.float32, shape=[None, unrolled_dim, num_input])
+y = tf.placeholder(dtype=tf.float32, shape=[None, unrolled_dim, number_of_classes])
 batch_size = tf.placeholder(tf.int64)
 
 # Create the dataset
 train_dataset = tf.data.Dataset \
         .from_tensor_slices((X, y)) \
-        .shuffle(buffer_size=16*batch_size) \
         .batch(batch_size, drop_remainder=True)
+        # .shuffle(buffer_size=16*batch_size) \
 
 validation_dataset = tf.data.Dataset \
         .from_tensor_slices((X, y)) \
@@ -50,9 +52,9 @@ test_dataset = tf.data.Dataset \
 dataset_iterator = tf.data.Iterator.from_structure((tf.float32, tf.float32), ([None, 100, 1], [None, 100, 50]))
 batch_X, batch_y = dataset_iterator.get_next()
 
-train_iterator = dataset_iterator.make_initializer(train_dataset)
-val_iterator = dataset_iterator.make_initializer(validation_dataset)
-test_iterator = dataset_iterator.make_initializer(test_dataset)
+train_iterator_init = dataset_iterator.make_initializer(train_dataset)
+val_iterator_init = dataset_iterator.make_initializer(validation_dataset)
+test_iterator_init = dataset_iterator.make_initializer(test_dataset)
 
 for cell_type in cell_type_list:
 
@@ -82,6 +84,7 @@ for cell_type in cell_type_list:
 
 
     with tf.Session() as sess:
+        # sess = tf_debug.TensorBoardDebugWrapperSession(sess, "Dell-XPS-13-9360:6064")
         sess.run(init)
 
         results_train_set = []
@@ -93,7 +96,7 @@ for cell_type in cell_type_list:
         
         for epoch in range(1, number_of_epochs+1):
             
-            sess.run(train_iterator, feed_dict={ X: X_train, y: y_train, batch_size: 128 })
+            sess.run(train_iterator_init, feed_dict={ X: X_train, y: y_train, batch_size: 128 })
 
             count_loss = 0; number_of_batches = 0
 
@@ -104,13 +107,14 @@ for cell_type in cell_type_list:
                     
                     count_loss += batch_loss
                     number_of_batches += 1
+                    print('Epoch:   {}, Batch:  {}, Loss:   {}'.format(epoch, number_of_batches, batch_loss))
                 except tf.errors.OutOfRangeError:
                     break
         
             train_loss = count_loss/number_of_batches
             results_train_set.append((epoch, train_loss))
             
-            sess.run(val_iterator, feed_dict={ X: X_val, y: y_val, batch_size: len(y_val) })
+            sess.run(val_iterator_init, feed_dict={ X: X_val, y: y_val, batch_size: len(y_val) })
             val_loss = sess.run(loss_func)
             results_val_set.append((val_loss))
     
@@ -140,7 +144,7 @@ for cell_type in cell_type_list:
         
 
         
-        sess.run(test_iterator, feed_dict={ X: X_test, y: y_test, batch_size: len(y_test) })
+        sess.run(test_iterator_init, feed_dict={ X: X_test, y: y_test, batch_size: len(y_test) })
         test_loss = sess.run(loss_func)
     
         print("Testing BPC Loss=" + "{:.3f}".format(test_loss))
