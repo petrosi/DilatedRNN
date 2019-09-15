@@ -57,10 +57,6 @@ test_iterator = dataset_iterator.make_initializer(test_dataset)
 
 for permutation in permutation_list:
     
-    X_train, y_train = X_train[:200], y_train[:200]
-    X_val, y_val = X_val[:40], y_val[:40]
-    X_test, y_test = X_test[:40], y_test[:40]
-
     if permutation:
         np.random.seed(100)
         permuted_idx = np.random.permutation(784)
