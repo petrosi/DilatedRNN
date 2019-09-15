@@ -1,2 +1,6 @@
-MNIST_data/*
 models/__pycache__/*
+__pycache__/*
+MNIST_data/*
+PTB_dataset/*
+*_Checkpoints
+*_results
